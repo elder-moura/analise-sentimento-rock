@@ -4,39 +4,63 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ---------- CONFIGURAÇÕES BÁSICAS ----------
 st.set_page_config(
-    page_title="Análise de Sentimentos - Rock",
-    page_icon="🎸",
-    layout="wide"
+    page_title="🎸 Análise de Sentimentos - Rock",
+    page_icon="🎧",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# ---------- TEMA ESCURO AUTOMÁTICO ----------
+# Streamlit detecta automaticamente se o navegador está em modo escuro
+# e aplica o tema padrão "Dark". Você pode reforçar com:
+st.markdown(
+    """
+    <style>
+    [data-testid="stAppViewContainer"] {
+        background-color: var(--background-color);
+        color: var(--text-color);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---------- CABEÇALHO ----------
 st.title("🎸 Análise de Sentimentos das 1000 Músicas de Rock (Letras.com)")
-st.markdown("Este painel interativo mostra a análise de sentimentos aplicada às 1000 músicas de rock mais buscadas no site Letras.com.")
+st.markdown("Este painel interativo mostra a análise de sentimentos aplicadas às 1000 músicas de rock mais buscadas no site Letras.com.")
 
 # ---------- CARREGAMENTO DOS DADOS ----------
 @st.cache_data
 def carregar_dados():
-    df = pd.read_csv("analise_sentimento_outputs/letras_sentimento.csv", encoding="utf-8-sig")
+    try:
+        df = pd.read_csv("analise_sentimento_outputs/letras_sentimento.csv", encoding="utf-8-sig")
+    except FileNotFoundError:
+        df = pd.read_csv("letras_sentimento.csv", encoding="utf-8-sig")
     return df
 
 df = carregar_dados()
 
 if df.empty:
-    st.error("❌ Nenhum dado encontrado. Verifique se o arquivo 'letras_sentimento.csv' foi gerado pelo script principal.")
+    st.error("❌ Nenhum dado encontrado. Coloque o arquivo `letras_sentimento.csv` na pasta `analise_sentimento_outputs/` ou na raiz do projeto.")
     st.stop()
 
 # ---------- FILTROS LATERAIS ----------
 st.sidebar.header("🎚️ Filtros")
+
 artistas = sorted(df['artista'].unique().tolist())
 idiomas = sorted(df['idioma_detectado'].unique().tolist())
 
-artista_sel = st.sidebar.multiselect("Selecione Artista(s)", artistas, default=[])
-idioma_sel = st.sidebar.multiselect("Filtrar por idioma detectado", idiomas, default=[])
+artista_sel = st.sidebar.multiselect("🎤 Selecione Artista(s)", artistas, default=[])
+idioma_sel = st.sidebar.multiselect("🌍 Filtrar por idioma detectado", idiomas, default=[])
 
 min_pol, max_pol = st.sidebar.slider(
-    "Faixa de Polaridade", 
+    "💬 Faixa de Polaridade", 
     float(df['sent_polarity'].min()), 
     float(df['sent_polarity'].max()), 
     (float(df['sent_polarity'].min()), float(df['sent_polarity'].max()))
@@ -50,9 +74,9 @@ if idioma_sel:
     df_filtrado = df_filtrado[df_filtrado['idioma_detectado'].isin(idioma_sel)]
 df_filtrado = df_filtrado[(df_filtrado['sent_polarity'] >= min_pol) & (df_filtrado['sent_polarity'] <= max_pol)]
 
-st.markdown(f"**{len(df_filtrado)} músicas exibidas após os filtros aplicados.**")
+st.markdown(f"**🎧 {len(df_filtrado)} músicas exibidas após filtros aplicados.**")
 
-# ---------- MÉTRICAS RESUMIDAS ----------
+# ---------- MÉTRICAS ----------
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("🎵 Total de Músicas", len(df_filtrado))
@@ -63,11 +87,14 @@ with col3:
 
 st.divider()
 
-# ---------- GRÁFICOS ----------
-tab1, tab2, tab3, tab4 = st.tabs(["Distribuição", "Artistas", "Tamanho x Polaridade", "Top Músicas"])
+# ---------- GUIAS ----------
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Distribuição", "🎤 Artistas", "📏 Tamanho x Polaridade", "🏆 Top Músicas", "☁️ WordClouds"
+])
 
+# === TAB 1: DISTRIBUIÇÃO ===
 with tab1:
-    st.subheader("📊 Distribuição de Polaridade")
+    st.subheader("Distribuição de Polaridade")
     fig = px.histogram(
         df_filtrado, 
         x="sent_polarity",
@@ -78,8 +105,9 @@ with tab1:
     fig.update_layout(xaxis_title="Polaridade", yaxis_title="Número de músicas", bargap=0.05)
     st.plotly_chart(fig, use_container_width=True)
 
+# === TAB 2: ARTISTAS ===
 with tab2:
-    st.subheader("🎤 Polaridade Média por Artista (Top 20)")
+    st.subheader("Polaridade Média por Artista (Top 20)")
     art_group = (
         df_filtrado.groupby("artista")["sent_polarity"]
         .mean()
@@ -99,8 +127,9 @@ with tab2:
     fig2.update_layout(yaxis=dict(autorange="reversed"))
     st.plotly_chart(fig2, use_container_width=True)
 
+# === TAB 3: TAMANHO X POLARIDADE ===
 with tab3:
-    st.subheader("📏 Relação: Tamanho da Letra × Polaridade")
+    st.subheader("Relação entre Tamanho da Letra e Polaridade")
     fig3 = px.scatter(
         df_filtrado,
         x="tam_letra",
@@ -108,28 +137,40 @@ with tab3:
         hover_data=["titulo", "artista"],
         color="sent_polarity",
         color_continuous_scale="RdYlGn",
-        labels={"tam_letra": "Tamanho (nº palavras)", "sent_polarity": "Polaridade"}
+        title="Tamanho da letra vs Polaridade"
     )
     st.plotly_chart(fig3, use_container_width=True)
 
+# === TAB 4: TOP MÚSICAS COM LETRA COMPLETA ===
 with tab4:
     st.subheader("🏆 Músicas Mais Positivas e Negativas")
+
     colp, coln = st.columns(2)
 
     top_pos = df_filtrado.sort_values("sent_polarity", ascending=False).head(10)
     top_neg = df_filtrado.sort_values("sent_polarity", ascending=True).head(10)
 
     with colp:
-        st.markdown("#### 🎶 Top 10 Positivas")
+        st.markdown("### 🎶 Top 10 Positivas")
         for _, row in top_pos.iterrows():
             st.markdown(f"**{row['titulo']}** — *{row['artista']}* ({row['sent_polarity']:.3f})")
-            st.caption(row['letra'][:300] + "...")
+            if st.button(f"🔍 Mostrar letra completa - {row['titulo']}", key=f"pos_{row['titulo']}"):
+                st.text_area("", row['letra'], height=200)
 
     with coln:
-        st.markdown("#### ⚡ Top 10 Negativas")
+        st.markdown("### ⚡ Top 10 Negativas")
         for _, row in top_neg.iterrows():
             st.markdown(f"**{row['titulo']}** — *{row['artista']}* ({row['sent_polarity']:.3f})")
-            st.caption(row['letra'][:300] + "...")
+            if st.button(f"🔍 Mostrar letra completa - {row['titulo']}", key=f"neg_{row['titulo']}"):
+                st.text_area("", row['letra'], height=200)
 
-st.divider()
-st.markdown("💡 *Desenvolvido por Elder e Kiyoko  — Projeto Acadêmico de Análise de Sentimentos com NLP e Web Scraping.*")
+# === TAB 5: WORDCLOUDS ===
+with tab5:
+    st.subheader("☁️ Wordclouds por Sentimento")
+
+    def gerar_wordcloud(texto, color):
+        wc = WordCloud(width=800, height=400, background_color="black", colormap=color, collocations=False).generate(texto)
+        fig, ax = plt.subplots(figsize=(10,5))
+        ax.imshow(wc, interpolation="bilinear")
+        ax.axis("off")
+        return fig
